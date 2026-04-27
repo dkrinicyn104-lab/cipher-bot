@@ -13,7 +13,7 @@ from telegram.ext import (
 )
 
 # ================== ВСТАВЬ СВОЙ ТОКЕН ==================
-BOT_TOKEN = "7649500751:AAF7sh0Ydagy0xGnaD0EbWw060VySEseKbM"
+BOT_TOKEN = "7649500751:AAGiUlZrXEb9IHlkfpx2KJPNB2PVcuYDeN8"
 # =======================================================
 
 logging.basicConfig(level=logging.INFO)
