@@ -11,9 +11,9 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters
 )
-
 # ================== ВСТАВЬ СВОЙ ТОКЕН ==================
-BOT_TOKEN = "7649500751:AAGiUlZrXEb9IHlkfpx2KJPNB2PVcuYDeN8"
+import os
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 # =======================================================
 
 logging.basicConfig(level=logging.INFO)
