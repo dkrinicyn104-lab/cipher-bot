@@ -3,10 +3,10 @@ import re
 import base64
 import hashlib
 import logging
-import asyncio
-from typing import Tuple, List, Optional
-
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, 
+    ReplyKeyboardMarkup, KeyboardButton
+)
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     CallbackQueryHandler, ContextTypes, filters
@@ -16,14 +16,9 @@ from telegram.helpers import escape_markdown
 # ТВОЙ ТОКЕН
 BOT_TOKEN = "7649500751:AAGUWL2O2epfFFvdO6mjHZX3ZelEBCwuJTQ"
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
-    level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- ЯДРО ШИФРОВАНИЯ ---
-
+# --- КРИПТО-ЯДРО (Без изменений, всё работает) ---
 def caesar(text: str, shift: int) -> str:
     res = []
     for c in text:
@@ -33,144 +28,147 @@ def caesar(text: str, shift: int) -> str:
         elif 'а' <= c.lower() <= 'я':
             base = ord('а') if c.islower() else ord('А')
             res.append(chr((ord(c) - base + shift) % 32 + base))
-        else:
-            res.append(c)
+        else: res.append(c)
     return "".join(res)
 
 def vigenere(text: str, key: str, decode: bool = False) -> str:
     key = key.lower() if key else "secret"
-    res = []
-    ki = 0
+    res, ki = [], 0
     for c in text:
         if c.isalpha():
             shift = ord(key[ki % len(key)]) - ord('a')
             if decode: shift = -shift
             res.append(caesar(c, shift))
             ki += 1
-        else:
-            res.append(c)
+        else: res.append(c)
     return "".join(res)
 
-def b64_process(text: str, encode: bool) -> str:
-    try:
-        if encode: return base64.b64encode(text.encode('utf-8')).decode('utf-8')
-        return base64.b64decode(text).decode('utf-8')
-    except: return "⚠️ Ошибка: неверный формат Base64"
+# --- ИНТЕРФЕЙС (Переработан на 100%) ---
 
-def hex_process(text: str, encode: bool) -> str:
-    try:
-        if encode: return text.encode('utf-8').hex()
-        return bytes.fromhex(text).decode('utf-8')
-    except: return "⚠️ Ошибка: неверный формат HEX"
+# Постоянное нижнее меню
+def main_reply_kb():
+    return ReplyKeyboardMarkup([
+        [KeyboardButton("⚙️ Настройки")],
+        [KeyboardButton("ℹ️ О боте"), KeyboardButton("❓ Помощь")]
+    ], resize_keyboard=True)
 
-# --- ИНТЕРФЕЙС ---
-
-def get_main_kb(user_data: dict) -> InlineKeyboardMarkup:
-    auto_btn = "🧠 Авто-Детект: " + ("🟢 ВКЛ" if user_data.get("auto") else "🔴 ВЫКЛ")
-    mode_btn = "⚙️ Режим: " + ("🔐 Шифр" if user_data.get("mode") == "encode" else "🔓 Дешифр")
+# Инлайн-меню настроек
+def settings_inline_kb(ud):
+    mode_str = "🔐 Шифрование" if ud.get("mode") == "encode" else "🔓 Дешифровка"
+    auto_str = "🟢 Авто: ВКЛ" if ud.get("auto") else "🔴 Авто: ВЫКЛ"
+    
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(mode_btn, callback_data="toggle_mode")],
-        [InlineKeyboardButton(auto_btn, callback_data="toggle_auto")],
-        [InlineKeyboardButton("🔤 Алгоритм", callback_data="ciphers"), InlineKeyboardButton("🔑 Ключ", callback_data="set_key")],
-        [InlineKeyboardButton("ℹ️ О боте", callback_data="about")]
+        [InlineKeyboardButton(f"Текущий шифр: {ud.get('cipher').upper()}", callback_data="ciphers_list")],
+        [InlineKeyboardButton(mode_str, callback_data="toggle_mode"), InlineKeyboardButton(auto_str, callback_data="toggle_auto")],
+        [InlineKeyboardButton("🔑 Изменить ключ", callback_data="set_key")],
+        [InlineKeyboardButton("🏠 В главное меню", callback_data="to_main")]
     ])
 
-def get_cipher_kb() -> InlineKeyboardMarkup:
+# Список всех шифров
+def ciphers_list_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Base64", callback_data="c_base64"), InlineKeyboardButton("HEX", callback_data="c_hex")],
-        [InlineKeyboardButton("Цезарь", callback_data="c_caesar"), InlineKeyboardButton("Виженер", callback_data="c_vigenere")],
-        [InlineKeyboardButton("ROT13", callback_data="c_rot13"), InlineKeyboardButton("Реверс", callback_data="c_reverse")],
-        [InlineKeyboardButton("MD5", callback_data="c_md5"), InlineKeyboardButton("SHA256", callback_data="c_sha256")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="menu")]
+        [InlineKeyboardButton("Base64", callback_data="set_c_base64"), InlineKeyboardButton("HEX", callback_data="set_c_hex")],
+        [InlineKeyboardButton("Цезарь", callback_data="set_c_caesar"), InlineKeyboardButton("Виженер", callback_data="set_c_vigenere")],
+        [InlineKeyboardButton("ROT13", callback_data="set_c_rot13"), InlineKeyboardButton("Реверс", callback_data="set_c_reverse")],
+        [InlineKeyboardButton("MD5", callback_data="set_c_md5"), InlineKeyboardButton("SHA256", callback_data="set_c_sha256")],
+        [InlineKeyboardButton("⬅️ Назад к настройкам", callback_data="to_settings")]
     ])
 
-# --- ОБРАБОТКА ---
+# --- ОБРАБОТЧИКИ ---
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.setdefault("cipher", "base64")
-    context.user_data.setdefault("mode", "encode")
-    context.user_data.setdefault("key", "secret")
-    context.user_data.setdefault("auto", False)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ud = context.user_data
+    ud.setdefault("cipher", "base64"); ud.setdefault("mode", "encode")
+    ud.setdefault("key", "secret"); ud.setdefault("auto", False)
     
     await update.message.reply_text(
-        r"🛡 *Cipher Bot PRO запущен\!*" + "\n\n" + r"Отправь текст для обработки\.",
-        parse_mode="MarkdownV2",
-        reply_markup=get_main_kb(context.user_data)
+        r"🛡 *Cipher Bot PRO* — Твой личный криптограф\." + "\n\n" +
+        r"Просто отправь мне текст, и я обработаю его\." + "\n" +
+        r"Нажми кнопку *Настройки* внизу, чтобы сменить шифр\.",
+        parse_mode="MarkdownV2", reply_markup=main_reply_kb()
     )
 
-async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = context.user_data
     text = update.message.text
 
+    # Обработка кнопок нижнего меню
+    if text == "⚙️ Настройки":
+        await update.message.reply_text("🛠 *Управление ботом:*", 
+            reply_markup=settings_inline_kb(ud), parse_mode="MarkdownV2")
+        return
+    if text == "ℹ️ О боте":
+        await update.message.reply_text("🦾 *Cipher Bot v3.0*\nСоздано для максимальной приватности.", parse_mode="MarkdownV2")
+        return
+    if text == "❓ Помощь":
+        await update.message.reply_text("1. Выбери шифр в Настройках.\n2. Пришли текст.\n3. Получи результат!", reply_markup=main_reply_kb())
+        return
+
+    # Логика ввода ключа
     if ud.get("state") == "waiting_key":
-        ud["key"], ud["state"] = text, "idle"
-        await update.message.reply_text(f"✅ Ключ: `{escape_markdown(text, 2)}`", parse_mode="MarkdownV2", reply_markup=get_main_kb(ud))
+        ud["key"] = text; ud["state"] = "idle"
+        await update.message.reply_text(f"✅ Ключ обновлен на: `{escape_markdown(text, 2)}`", 
+            parse_mode="MarkdownV2", reply_markup=main_reply_kb())
         return
 
-    if ud.get("auto"):
-        res_list = []
-        if re.fullmatch(r'[0-9a-fA-F]+', text):
-            r = hex_process(text, False)
-            if "⚠️" not in r: res_list.append(("HEX", r))
-        if re.fullmatch(r'[A-Za-z0-9+/=]+', text):
-            r = b64_process(text, False)
-            if "⚠️" not in r: res_list.append(("Base64", r))
-        
-        if not res_list:
-            await update.message.reply_text("❌ Формат не распознан.")
-            return
-        
-        out = r"🔍 *Результат:* " + "\n\n"
-        for n, t in res_list: out += f"🔹 *{n}*: `{escape_markdown(t, 2)}`\n"
-        await update.message.reply_text(out, parse_mode="MarkdownV2")
-        return
-
-    c, m = ud.get("cipher", "base64"), ud.get("mode", "encode")
+    # Основная обработка текста
+    c, m = ud.get("cipher"), ud.get("mode")
     try:
-        if c == "base64": res = b64_process(text, m == "encode")
-        elif c == "hex": res = hex_process(text, m == "encode")
-        elif c == "caesar": res = caesar(text, 3 if m == "encode" else -3)
-        elif c == "vigenere": res = vigenere(text, ud.get("key", "secret"), m == "decode")
-        elif c == "rot13": res = text.translate(str.maketrans("ABCDEFGHIJKLMnopqrstuvwxyz", "NOPQRSTUVWXYZAbcdefghijklm"))
-        elif c == "reverse": res = text[::-1]
-        elif c == "md5": res = hashlib.md5(text.encode()).hexdigest()
-        elif c == "sha256": res = hashlib.sha256(text.encode()).hexdigest()
-        
+        if c == "base64":
+            res = base64.b64encode(text.encode()).decode() if m == "encode" else base64.b64decode(text).decode()
+        elif c == "hex":
+            res = text.encode().hex() if m == "encode" else bytes.fromhex(text).decode()
+        elif c == "caesar":
+            res = caesar(text, 3 if m == "encode" else -3)
+        elif c == "vigenere":
+            res = vigenere(text, ud.get("key"), m == "decode")
+        elif c == "rot13":
+            res = text.translate(str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", "NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm"))
+        elif c == "reverse":
+            res = text[::-1]
+        elif c == "md5":
+            res = hashlib.md5(text.encode()).hexdigest()
+        elif c == "sha256":
+            res = hashlib.sha256(text.encode()).hexdigest()
+        else: res = "Ошибка выбора"
+
         await update.message.reply_text(
-            fr"✅ *Результат \({escape_markdown(c.upper(), 2)}\):*" + "\n\n" + f"`{escape_markdown(res, 2)}`",
+            fr"✅ *Результат \({c.upper()}\):*" + "\n\n" + f"`{escape_markdown(res, 2)}`",
             parse_mode="MarkdownV2"
         )
     except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка: {e}")
+        await update.message.reply_text(f"❌ Ошибка данных для шифра {c.upper()}")
 
-async def btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    ud = context.user_data
-    d = q.data
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query; await q.answer()
+    ud = context.user_data; data = q.data
 
-    if d == "toggle_mode": ud["mode"] = "decode" if ud.get("mode") == "encode" else "encode"
-    elif d == "toggle_auto": ud["auto"] = not ud.get("auto")
-    elif d == "ciphers":
-        await q.edit_message_text("🔤 Выберите алгоритм:", reply_markup=get_cipher_kb())
-        return
-    elif d.startswith("c_"): ud["cipher"] = d.split("_")[1]
-    elif d == "set_key":
+    if data == "to_settings" or data == "to_main":
+        await q.edit_message_text("🛠 *Управление ботом:*", reply_markup=settings_inline_kb(ud), parse_mode="MarkdownV2")
+    elif data == "toggle_mode":
+        ud["mode"] = "decode" if ud["mode"] == "encode" else "encode"
+        await q.edit_message_reply_markup(reply_markup=settings_inline_kb(ud))
+    elif data == "toggle_auto":
+        ud["auto"] = not ud["auto"]
+        await q.edit_message_reply_markup(reply_markup=settings_inline_kb(ud))
+    elif data == "ciphers_list":
+        await q.edit_message_text("🔤 *Выбери алгоритм:*", reply_markup=ciphers_list_kb(), parse_mode="MarkdownV2")
+    elif data.startswith("set_c_"):
+        ud["cipher"] = data.replace("set_c_", "")
+        await q.edit_message_text(f"✅ Выбран шифр: *{ud['cipher'].upper()}*", 
+            reply_markup=settings_inline_kb(ud), parse_mode="MarkdownV2")
+    elif data == "set_key":
         ud["state"] = "waiting_key"
-        await q.edit_message_text("⌨️ Введи новый ключ:")
-        return
-
-    await q.edit_message_text(
-        f"⚙️ *Настройки*:\nАлгоритм: `{ud.get('cipher')}`\nРежим: `{'Шифр' if ud.get('mode')=='encode' else 'Дешифр'}`",
-        reply_markup=get_main_kb(ud), parse_mode="MarkdownV2"
-    )
+        await q.edit_message_text("⌨️ *Отправь мне новое кодовое слово (ключ):*", parse_mode="MarkdownV2")
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CallbackQueryHandler(btn))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_text))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(callback_handler))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    print("Бот запущен!")
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+    
