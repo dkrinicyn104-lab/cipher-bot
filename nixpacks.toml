@@ -1,2 +1,8 @@
+[providers]
+python = true
+
+[phases.setup]
+nixPkgs = ["python311"]
+
 [start]
 cmd = "python cipher_bot.py"
