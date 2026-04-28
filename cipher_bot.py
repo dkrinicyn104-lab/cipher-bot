@@ -517,6 +517,10 @@ def main_keyboard(auto=False):
             InlineKeyboardButton("ℹ️ Инфо", callback_data='cipher_info'),
             InlineKeyboardButton("❓ Помощь", callback_data='help_btn'),
         ],
+        [
+            InlineKeyboardButton("🏠 В начало", callback_data='restart'),
+            InlineKeyboardButton("🗑 Полный сброс", callback_data='reset_all'),
+        ],
     ])
 
 def group_keyboard():
@@ -554,22 +558,25 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     info = CIPHER_INFO[cid]
     total_ciphers = sum(len(v) for v in CIPHER_GROUPS.values())
 
-    text = (
-        f"🔐 *ШИФР ULTRA PRO*\n"
-        f"{D}\n\n"
-        f"Привет, *{name}*! 👋\n\n"
-        f"Я самый мощный шифратор в Telegram!\n\n"
-        f"⚡ *{total_ciphers} шифров* на выбор\n"
-        f"🔍 *Авто-определение* любого шифра\n"
-        f"📜 *История* последних шифрований\n"
-        f"🌍 Поддержка *русского языка*\n\n"
-        f"{D}\n"
-        f"Текущий шифр: *{info[0]} {info[1]}*\n"
-        f"{D}\n\n"
-        f"✏️ *Просто напиши любой текст!*"
+    welcome = (
+        f"👋 Привет, *{name}*!\n\n"
+        f"Я — *ШИФР* 🔐\n"
+        f"Твой личный бот-шифратор.\n\n"
+        f"Умею шифровать и расшифровывать\n"
+        f"текст *{total_ciphers} разными способами* — от\n"
+        f"классики до продвинутых алгоритмов.\n\n"
+        f"━━━━━━━━━━━━━━━━\n"
+        f"📦 *Base64, HEX, Binary* — любой язык\n"
+        f"🔤 *Цезарь, Виженер* — классика\n"
+        f"📡 *Морзе, NATO* — легенды\n"
+        f"🔍 *Авто-режим* — сам разгадаю шифр\n"
+        f"━━━━━━━━━━━━━━━━\n\n"
+        f"Активный шифр: *{info[0]} {info[1]}*\n\n"
+        f"✏️ *Напиши что-нибудь — попробуй!*"
     )
+
     await update.message.reply_text(
-        text, parse_mode='Markdown',
+        welcome, parse_mode='Markdown',
         reply_markup=main_keyboard(st.get('auto_mode', False))
     )
 
@@ -773,6 +780,56 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             f"🗑 *История очищена!*\n{D}\n\n✏️ Напиши текст:",
             parse_mode='Markdown', reply_markup=main_keyboard(st.get('auto_mode', False))
+        )
+
+    elif data == 'restart':
+        cid = st['cipher']
+        info = CIPHER_INFO[cid]
+        auto = st.get('auto_mode', False)
+        name = query.from_user.first_name or "друг"
+        total_ciphers = sum(len(v) for v in CIPHER_GROUPS.values())
+        await query.edit_message_text(
+            f"🔐 *ШИФР ULTRA PRO*\n"
+            f"{D}\n\n"
+            f"Привет, *{name}*! 👋\n\n"
+            f"⚡ *{total_ciphers} шифров* на выбор\n"
+            f"🔍 *Авто-определение* любого шифра\n"
+            f"📜 *История* последних шифрований\n"
+            f"🌍 Поддержка *русского языка*\n\n"
+            f"{D}\n"
+            f"Текущий шифр: *{info[0]} {info[1]}*\n"
+            f"{D}\n\n"
+            f"✏️ *Просто напиши любой текст!*",
+            parse_mode='Markdown',
+            reply_markup=main_keyboard(auto)
+        )
+
+    elif data == 'reset_all':
+        await query.edit_message_text(
+            f"⚠️ *Подтверди сброс*\n{D}\n\n"
+            f"Это удалит:\n"
+            f"• Всю историю ({len(st.get('history',[]))} записей)\n"
+            f"• Настройки ключей\n"
+            f"• Авто-режим\n\n"
+            f"Шифр вернётся к Base64.",
+            parse_mode='Markdown',
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Да, сбросить", callback_data='confirm_reset')],
+                [InlineKeyboardButton("❌ Отмена", callback_data='back_main')],
+            ])
+        )
+
+    elif data == 'confirm_reset':
+        user_data[uid] = {'cipher': 'base64', 'key': '', 'auto_mode': False, 'history': [], 'favorites': []}
+        st = user_data[uid]
+        await query.edit_message_text(
+            f"✅ *Всё сброшено!*\n{D}\n\n"
+            f"Шифр: *📦 Base64*\n"
+            f"История: очищена\n"
+            f"Авто-режим: выключен\n\n"
+            f"✏️ *Напиши текст:*",
+            parse_mode='Markdown',
+            reply_markup=main_keyboard(False)
         )
 
     elif data == 'help_btn':
