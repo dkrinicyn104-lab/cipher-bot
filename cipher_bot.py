@@ -5,7 +5,7 @@ import hashlib
 import logging
 from typing import Tuple, List, Optional
 
-from dotenv import load_dotenv
+# Библиотеки для Telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -13,11 +13,10 @@ from telegram.ext import (
 )
 from telegram.helpers import escape_markdown
 
-# 1. ЗАГРУЗКА КОНФИГУРАЦИИ
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+# ТВОЙ ТОКЕН (Вставлен напрямую)
+BOT_TOKEN = "7649500751:AAGUWL2O2epfFFvdO6mjHZX3ZelEBCwuJTQ"
 
-# 2. НАСТРОЙКА ЛОГИРОВАНИЯ
+# Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', 
     level=logging.INFO
@@ -47,6 +46,7 @@ def vigenere(text: str, key: str, decode: bool = False) -> str:
     ki = 0
     for c in text:
         if c.isalpha():
+            # Базовое смещение по латинице
             shift = ord(key[ki % len(key)]) - ord('a')
             if decode:
                 shift = -shift
@@ -83,8 +83,8 @@ def rot13(text: str) -> str:
 # ╚══════════════════════════════════╝
 
 def get_main_kb(user_data: dict) -> InlineKeyboardMarkup:
-    auto_btn = "🟢 Авто-Детект ВКЛ" if user_data.get("auto") else "🔴 Авто-Детект ВЫКЛ"
-    mode_btn = "🔐 Режим: Шифрование" if user_data.get("mode") == "encode" else "🔓 Режим: Дешифровка"
+    auto_btn = "🧠 Авто-Детект: " + ("🟢 ВКЛ" if user_data.get("auto") else "🔴 ВЫКЛ")
+    mode_btn = "⚙️ Режим: " + ("🔐 Шифрование" if user_data.get("mode") == "encode" else "🔓 Дешифровка")
     
     return InlineKeyboardMarkup([
         [InlineKeyboardButton(mode_btn, callback_data="toggle_mode")],
@@ -93,7 +93,7 @@ def get_main_kb(user_data: dict) -> InlineKeyboardMarkup:
             InlineKeyboardButton("🔤 Выбрать шифр", callback_data="ciphers"),
             InlineKeyboardButton("🔑 Задать ключ", callback_data="set_key")
         ],
-        [InlineKeyboardButton("ℹ️ Информация", callback_data="about")]
+        [InlineKeyboardButton("ℹ️ О боте", callback_data="about")]
     ])
 
 def get_cipher_kb() -> InlineKeyboardMarkup:
@@ -102,15 +102,14 @@ def get_cipher_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton("🔤 Цезарь", callback_data="c_caesar"), InlineKeyboardButton("🔑 Виженер", callback_data="c_vigenere")],
         [InlineKeyboardButton("🔄 ROT13", callback_data="c_rot13"), InlineKeyboardButton("↩️ Реверс", callback_data="c_reverse")],
         [InlineKeyboardButton("🔐 MD5", callback_data="c_md5"), InlineKeyboardButton("🛡 SHA256", callback_data="c_sha256")],
-        [InlineKeyboardButton("◀️ Назад в меню", callback_data="menu")]
+        [InlineKeyboardButton("◀️ Назад", callback_data="menu")]
     ])
 
 # ╔══════════════════════════════════╗
-#    ЛОГИКА БОТА И ХЭНДЛЕРЫ
+#    ХЭНДЛЕРЫ
 # ╚══════════════════════════════════╝
 
 def init_user(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Инициализация дефолтных настроек пользователя"""
     if "cipher" not in context.user_data:
         context.user_data.update({
             "cipher": "base64", "mode": "encode", "key": "secret", 
@@ -119,9 +118,10 @@ def init_user(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     init_user(context)
+    # Используем r"" для корректного MarkdownV2
     text = (
-        "🛡 *Добро пожаловать в Cipher Bot PRO*\n\n"
-        "Отправь мне текст, и я обработаю его согласно твоим настройкам\."
+        r"🛡 *Cipher Bot PRO запущен\!*" + "\n\n" +
+        r"Отправь любой текст, и я обработаю его согласно настройкам\."
     )
     await update.message.reply_text(
         text, 
@@ -134,19 +134,16 @@ async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     ud = context.user_data
     text = update.message.text
 
-    # Обработка ввода ключа
     if ud.get("state") == "waiting_key":
         ud["key"] = text
         ud["state"] = "idle"
-        safe_key = escape_markdown(text, version=2)
         await update.message.reply_text(
-            f"✅ Ключ успешно обновлен: `{safe_key}`", 
+            f"✅ Ключ установлен: `{escape_markdown(text, version=2)}`", 
             parse_mode="MarkdownV2", 
             reply_markup=get_main_kb(ud)
         )
         return
 
-    # Авто-Детект
     if ud.get("auto"):
         results = []
         if re.fullmatch(r'[0-9a-fA-F]+', text):
@@ -157,18 +154,17 @@ async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             if not res.startswith("⚠️"): results.append(("Base64", res))
         
         if not results:
-            await update.message.reply_text("❌ Авто-детект не смог распознать формат.")
+            await update.message.reply_text("❌ Авто-детект не узнал формат текста.")
             return
             
-        reply = "🔍 *Возможные расшифровки:*\n\n"
-        for name, r in results:
-            reply += f"🔹 *{name}*: `{escape_markdown(r[:1000], version=2)}`\n"
+        reply = r"🔍 *Результаты распознавания:*" + "\n\n"
+        for name, r_text in results:
+            reply += f"🔹 *{name}*: `{escape_markdown(r_text[:500], version=2)}`\n"
         await update.message.reply_text(reply, parse_mode="MarkdownV2")
         return
 
-    # Ручная обработка
     c, m = ud["cipher"], ud["mode"]
-    res = "Неизвестная ошибка"
+    res = ""
     
     try:
         if c == "base64": res = b64_process(text, m == "encode")
@@ -179,22 +175,20 @@ async def process_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         elif c == "reverse": res = text[::-1]
         elif c == "md5": res = hashlib.md5(text.encode()).hexdigest()
         elif c == "sha256": res = hashlib.sha256(text.encode()).hexdigest()
+        
+        safe_res = escape_markdown(res[:4000], version=2)
+        c_name = escape_markdown(c.upper(), version=2)
+        
+        await update.message.reply_text(
+            fr"✅ *Результат \({c_name}\):*" + "\n\n" + f"`{safe_res}`", 
+            parse_mode="MarkdownV2"
+        )
     except Exception as e:
-        logger.error(f"Processing error: {e}")
-        res = "⚠️ Внутренняя ошибка обработки текста."
-
-    # Защита от лимитов Telegram (4096 символов)
-    safe_res = escape_markdown(res[:4000], version=2)
-    cipher_name = escape_markdown(c.upper(), version=2)
-    
-    await update.message.reply_text(
-        f"✅ *Результат \({cipher_name}\):*\n\n`{safe_res}`", 
-        parse_mode="MarkdownV2"
-    )
+        await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    await query.answer() # Убирает "часики" загрузки на кнопке
+    await query.answer()
     init_user(context)
     ud = context.user_data
     data = query.data
@@ -208,42 +202,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     elif data.startswith("c_"):
         ud["cipher"] = data.split("_")[1]
-        ud["auto"] = False # Отключаем авто-детект при ручном выборе
     elif data == "set_key":
         ud["state"] = "waiting_key"
-        await query.edit_message_text("⌨️ Отправь мне новое слово-ключ следующим сообщением:")
+        await query.edit_message_text("⌨️ Введи слово-ключ (для Виженера):")
         return
-    elif data == "menu":
-        pass
     elif data == "about":
-        await query.answer("Cipher Bot - Создано для GitHub 🚀", show_alert=True)
+        await query.answer("Шифратор PRO v2.0", show_alert=True)
         return
 
-    # Обновление меню
-    mode_ru = "Шифрование" if ud["mode"] == "encode" else "Дешифровка"
-    safe_key = escape_markdown(ud['key'], version=2)
-    
+    mode_txt = "Шифрование" if ud["mode"] == "encode" else "Дешифровка"
     await query.edit_message_text(
-        f"⚙️ *Текущие настройки*:\n"
-        f"🔸 Алгоритм: `{ud['cipher']}`\n"
-        f"🔸 Режим: `{mode_ru}`\n"
-        f"🔸 Ключ: `{safe_key}`",
+        f"⚙️ *Настройки*:\n"
+        f"Алгоритм: `{ud['cipher']}`\n"
+        f"Режим: `{mode_txt}`\n"
+        f"Ключ: `{escape_markdown(ud['key'], version=2)}`",
         reply_markup=get_main_kb(ud),
         parse_mode="MarkdownV2"
     )
 
 def main() -> None:
-    if not BOT_TOKEN:
-        logger.error("CRITICAL: BOT_TOKEN не найден! Проверьте файл .env")
-        return
-
     app = Application.builder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_text))
     
-    logger.info("Бот успешно запущен!")
+    print("Бот успешно запущен на сервере!")
     app.run_polling()
 
 if __name__ == "__main__":
