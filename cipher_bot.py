@@ -1,11 +1,9 @@
-import os
-import re
+import logging
 import base64
 import hashlib
-import logging
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, 
-    ReplyKeyboardMarkup, KeyboardButton, constants
+    ReplyKeyboardMarkup, KeyboardButton
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -13,161 +11,155 @@ from telegram.ext import (
 )
 from telegram.helpers import escape_markdown
 
-# ТВОЙ ТОКЕН
+# --- КОНФИГУРАЦИЯ ---
 BOT_TOKEN = "7649500751:AAGUWL2O2epfFFvdO6mjHZX3ZelEBCwuJTQ"
 
 logging.basicConfig(level=logging.INFO)
 
-# --- ГРАФИКА И СТИЛЬ ---
-DIVIDER = "────────────────────────"
-HACKER_HEADER = "📟 **CRYPTO TERMINAL v4.0**"
+# --- ДИЗАЙН ---
+UI_SEP = "────────────────────"
+THEME_TITLE = "🔓 **CIPHER TERMINAL v5.0**"
 
-# --- ЛОГИКА ШИФРОВ ---
-def caesar(text: str, shift: int) -> str:
-    res = []
-    for c in text:
-        if 'a' <= c.lower() <= 'z':
-            base = ord('a') if c.islower() else ord('A')
-            res.append(chr((ord(c) - base + shift) % 26 + base))
-        elif 'а' <= c.lower() <= 'я':
-            base = ord('а') if c.islower() else ord('А')
-            res.append(chr((ord(c) - base + shift) % 32 + base))
-        else: res.append(c)
-    return "".join(res)
+# --- ЯДРО АЛГОРИТМОВ ---
 
-def vigenere(text: str, key: str, decode: bool = False) -> str:
-    key = key.lower() if key else "secret"
-    res, ki = [], 0
-    for c in text:
-        if c.isalpha():
-            shift = ord(key[ki % len(key)]) - ord('a')
-            if decode: shift = -shift
-            res.append(caesar(c, shift))
-            ki += 1
-        else: res.append(c)
-    return "".join(res)
+MORSE_DICT = {'A':'.-', 'B':'-...', 'C':'-.-.', 'D':'-..', 'E':'.', 'F':'..-.', 'G':'--.', 'H':'....', 'I':'..', 'J':'.---', 'K':'-.-', 'L':'.-..', 'M':'--', 'N':'-.', 'O':'---', 'P':'.--.', 'Q':'--.-', 'R':'.-.', 'S':'...', 'T':'-', 'U':'..-', 'V':'...-', 'W':'.--', 'X':'-..-', 'Y':'-.--', 'Z':'--..', '1':'.----', '2':'..---', '3':'...--', '4':'....-', '5':'.....', '6':'-....', '7':'--...', '8':'---..', '9':'----.', '0':'-----', ' ': '/'}
+
+def caesar_pro(text, shift):
+    res = ""
+    for char in text:
+        if char.isalpha():
+            start = ord('A') if char.isupper() else ord('a')
+            alphabet_size = 32 if 'а' <= char.lower() <= 'я' else 26
+            if 'а' <= char.lower() <= 'я': start = ord('А') if char.isupper() else ord('а')
+            res += chr((ord(char) - start + shift) % alphabet_size + start)
+        else: res += char
+    return res
+
+def text_to_bits(text):
+    return ' '.join(format(ord(x), '08b') for x in text)
+
+def bits_to_text(bits):
+    try: return "".join([chr(int(b, 2)) for b in bits.split()])
+    except: return "⚠️ Ошибка декодирования Binary"
 
 # --- КЛАВИАТУРЫ ---
 
-def get_main_reply():
+def main_menu_kb():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("⚙️ ПАНЕЛЬ УПРАВЛЕНИЯ")],
-        [KeyboardButton("👤 МОЙ ПРОФИЛЬ"), KeyboardButton("🆘 ПОМОЩЬ")]
+        [KeyboardButton("⚙️ ТЕРМИНАЛ"), KeyboardButton("👤 ПРОФИЛЬ")],
+        [KeyboardButton("🆘 ИНФО / ПОМОЩЬ")]
     ], resize_keyboard=True)
 
-def get_settings_inline(ud):
-    m_icon = "🔐" if ud.get("mode") == "encode" else "🔓"
-    m_text = "ШИФРОВАНИЕ" if ud.get("mode") == "encode" else "ДЕШИФРОВКА"
-    a_icon = "🔵" if ud.get("auto") else "⚪"
-    
+def settings_kb(ud):
+    mode = "ШИФРОВКА 🔐" if ud['mode'] == 'encode' else "ДЕШИФРОВКА 🔓"
+    auto = "ВКЛ 🔵" if ud['auto'] else "ВЫКЛ ⚪"
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"📡 АЛГОРИТМ: {ud.get('cipher').upper()}", callback_data="list_ciphers")],
-        [InlineKeyboardButton(f"{m_icon} РЕЖИМ: {m_text}", callback_data="toggle_mode")],
-        [InlineKeyboardButton(f"{a_icon} АВТО-ДЕТЕКТ", callback_data="toggle_auto"), 
-         InlineKeyboardButton("🔑 КЛЮЧ", callback_data="set_key")],
-        [InlineKeyboardButton("💎 ЗАКРЫТЬ ПАНЕЛЬ", callback_data="close_panel")]
+        [InlineKeyboardButton(f"📡 АЛГОРИТМ: {ud['cipher'].upper()}", callback_data="list")],
+        [InlineKeyboardButton(f"🔄 РЕЖИМ: {mode}", callback_data="t_mode")],
+        [InlineKeyboardButton(f"🤖 АВТО: {auto}", callback_data="t_auto"), InlineKeyboardButton("🔑 КЛЮЧ", callback_data="s_key")],
+        [InlineKeyboardButton("❌ ЗАКРЫТЬ", callback_data="close")]
     ])
 
-def get_ciphers_inline():
+def algorithms_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📦 Base64", callback_data="sc_base64"), InlineKeyboardButton("📟 HEX", callback_data="sc_hex")],
-        [InlineKeyboardButton("🏛 Caesar", callback_data="sc_caesar"), InlineKeyboardButton("🔑 Vigenere", callback_data="sc_vigenere")],
-        [InlineKeyboardButton("🔄 ROT13", callback_data="sc_rot13"), InlineKeyboardButton("◀️ REVERSE", callback_data="sc_reverse")],
-        [InlineKeyboardButton("🔒 MD5", callback_data="sc_md5"), InlineKeyboardButton("🛡 SHA256", callback_data="sc_sha256")],
-        [InlineKeyboardButton("⬅️ НАЗАД", callback_data="back_to_settings")]
+        [InlineKeyboardButton("BASE64", callback_data="set_base64"), InlineKeyboardButton("HEX", callback_data="set_hex")],
+        [InlineKeyboardButton("CAESAR", callback_data="set_caesar"), InlineKeyboardButton("VIGENERE", callback_data="set_vigenere")],
+        [InlineKeyboardButton("BINARY", callback_data="set_binary"), InlineKeyboardButton("MORSE", callback_data="set_morse")],
+        [InlineKeyboardButton("SHA256", callback_data="set_sha256"), InlineKeyboardButton("REVERSE", callback_data="set_reverse")],
+        [InlineKeyboardButton("⬅️ НАЗАД", callback_data="back")]
     ])
 
-# --- ХЭНДЛЕРЫ ---
+# --- ЛОГИКА ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = context.user_data
-    for k, v in {"cipher": "base64", "mode": "encode", "key": "secret", "auto": False}.items():
+    for k, v in {"cipher": "base64", "mode": "encode", "key": "secret", "auto": False, "state": "idle"}.items():
         ud.setdefault(k, v)
     
-    msg = (
-        f"{HACKER_HEADER}\n{DIVIDER}\n"
-        "Система готова к работе. Введите текст для мгновенной обработки или используйте панель управления для настройки протоколов."
+    await update.message.reply_text(
+        f"{THEME_TITLE}\n{UI_SEP}\nСистема инициализирована. Ожидаю данные...",
+        reply_markup=main_menu_kb(), parse_mode="Markdown"
     )
-    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=get_main_reply())
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_ui(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = context.user_data
     text = update.message.text
 
-    if text == "⚙️ ПАНЕЛЬ УПРАВЛЕНИЯ":
-        await update.message.reply_text(f"🛠 **НАСТРОЙКИ ПРОТОКОЛОВ:**\n{DIVIDER}", 
-            reply_markup=get_settings_inline(ud), parse_mode="Markdown")
-        return
-
-    if ud.get("state") == "waiting_key":
+    if text == "⚙️ ТЕРМИНАЛ":
+        await update.message.reply_text(f"🛰 **УПРАВЛЕНИЕ ПРОТОКОЛАМИ:**\n{UI_SEP}", 
+                                       reply_markup=settings_kb(ud), parse_mode="Markdown")
+    elif text == "👤 ПРОФИЛЬ":
+        p = (f"👤 **ВАШ ПРОФИЛЬ:**\n{UI_SEP}\n"
+             f"● Шифр: `{ud['cipher'].upper()}`\n"
+             f"● Режим: `{ud['mode'].upper()}`\n"
+             f"● Ключ: `{ud['key']}`\n"
+             f"● Авто-детект: `{'АКТИВЕН' if ud['auto'] else 'ВЫКЛЮЧЕН'}`")
+        await update.message.reply_text(p, parse_mode="Markdown")
+    elif text == "🆘 ИНФО / ПОМОЩЬ":
+        await update.message.reply_text("📖 **ИНСТРУКЦИЯ:**\n1. Настрой шифр в 'ТЕРМИНАЛЕ'\n2. Отправь текст в чат\n3. Получи мгновенный результат.", parse_mode="Markdown")
+    
+    elif ud.get("state") == "waiting_key":
         ud["key"], ud["state"] = text, "idle"
-        await update.message.reply_text(f"✅ **КЛЮЧ ПРИНЯТ:** `{text}`", parse_mode="Markdown")
-        return
+        await update.message.reply_text(f"🔑 **КЛЮЧ УСТАНОВЛЕН:** `{text}`", parse_mode="Markdown")
+    
+    else:
+        # ОБРАБОТКА ТЕКСТА
+        c, m = ud['cipher'], ud['mode']
+        res = ""
+        try:
+            if c == "base64":
+                res = base64.b64encode(text.encode()).decode() if m == "encode" else base64.b64decode(text).decode()
+            elif c == "hex":
+                res = text.encode().hex() if m == "encode" else bytes.fromhex(text).decode()
+            elif c == "binary":
+                res = text_to_bits(text) if m == "encode" else bits_to_text(text)
+            elif c == "caesar":
+                res = caesar_pro(text, 3 if m == "encode" else -3)
+            elif c == "reverse":
+                res = text[::-1]
+            elif c == "sha256":
+                res = hashlib.sha256(text.encode()).hexdigest()
+            elif c == "morse":
+                if m == "encode": res = " ".join(MORSE_DICT.get(c.upper(), '') for c in text)
+                else:
+                    inv_morse = {v: k for k, v in MORSE_DICT.items()}
+                    res = "".join(inv_morse.get(b, '') for b in text.split())
+            else: res = "Алгортим в разработке..."
 
-    # Процесс обработки
-    c, m = ud.get("cipher"), ud.get("mode")
-    try:
-        if c == "base64":
-            res = base64.b64encode(text.encode()).decode() if m == "encode" else base64.b64decode(text).decode()
-        elif c == "hex":
-            res = text.encode().hex() if m == "encode" else bytes.fromhex(text).decode()
-        elif c == "caesar":
-            res = caesar(text, 3 if m == "encode" else -3)
-        elif c == "vigenere":
-            res = vigenere(text, ud.get("key"), m == "decode")
-        elif c == "rot13":
-            res = text.translate(str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", "NOPQRSTUVWXYZABCDEFGHIJKLMnopqrstuvwxyzabcdefghijklm"))
-        elif c == "reverse":
-            res = text[::-1]
-        elif c == "md5":
-            res = hashlib.md5(text.encode()).hexdigest()
-        elif c == "sha256":
-            res = hashlib.sha256(text.encode()).hexdigest()
-        
-        # Визуал ответа
-        response = (
-            f"✅ **ОБРАБОТКА ЗАВЕРШЕНА**\n{DIVIDER}\n"
-            f"🔹 **Метод:** `{c.upper()}`\n"
-            f"🔹 **Режим:** `{'ШИФРОВКА' if m == 'encode' else 'ДЕШИФРОВКА'}`\n\n"
-            f"📝 **РЕЗУЛЬТАТ:**\n`{res}`"
-        )
-        await update.message.reply_text(response, parse_mode="Markdown")
-    except:
-        await update.message.reply_text("❌ **ОШИБКА ПРОТОКОЛА:** Проверьте корректность входных данных.")
+            await update.message.reply_text(f"📥 **INPUT:** `{text}`\n📤 **OUTPUT:**\n`{res}`", parse_mode="Markdown")
+        except:
+            await update.message.reply_text("⚠️ **ERROR:** Ошибка обработки. Проверьте формат.")
 
-async def on_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button_tap(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer() # МОМЕНТАЛЬНЫЙ ОТКЛИК (Убирает лаг кнопки)
+    await query.answer() # Убирает задержку
     ud = context.user_data
     data = query.data
 
-    if data == "back_to_settings":
-        await query.edit_message_text(f"🛠 **НАСТРОЙКИ ПРОТОКОЛОВ:**\n{DIVIDER}", 
-            reply_markup=get_settings_inline(ud), parse_mode="Markdown")
-    elif data == "toggle_mode":
+    if data == "back":
+        await query.edit_message_text(f"🛰 **УПРАВЛЕНИЕ ПРОТОКОЛАМИ:**\n{UI_SEP}", reply_markup=settings_kb(ud), parse_mode="Markdown")
+    elif data == "t_mode":
         ud["mode"] = "decode" if ud["mode"] == "encode" else "encode"
-        await query.edit_message_reply_markup(reply_markup=get_settings_inline(ud))
-    elif data == "toggle_auto":
+        await query.edit_message_reply_markup(reply_markup=settings_kb(ud))
+    elif data == "t_auto":
         ud["auto"] = not ud["auto"]
-        await query.edit_message_reply_markup(reply_markup=get_settings_inline(ud))
-    elif data == "list_ciphers":
-        await query.edit_message_text(f"📡 **ВЫБОР АЛГОРИТМА:**\n{DIVIDER}", 
-            reply_markup=get_ciphers_inline(), parse_mode="Markdown")
-    elif data.startswith("sc_"):
-        ud["cipher"] = data.replace("sc_", "")
-        await query.edit_message_text(f"✅ **ПРОТОКОЛ {ud['cipher'].upper()} АКТИВИРОВАН**", 
-            reply_markup=get_settings_inline(ud), parse_mode="Markdown")
-    elif data == "set_key":
+        await query.edit_message_reply_markup(reply_markup=settings_kb(ud))
+    elif data == "list":
+        await query.edit_message_text(f"📡 **ВЫБОР АЛГОРИТМА:**\n{UI_SEP}", reply_markup=algorithms_kb(), parse_mode="Markdown")
+    elif data.startswith("set_"):
+        ud["cipher"] = data.replace("set_", "")
+        await query.edit_message_text(f"✅ **АКТИВИРОВАН:** `{ud['cipher'].upper()}`", reply_markup=settings_kb(ud), parse_mode="Markdown")
+    elif data == "s_key":
         ud["state"] = "waiting_key"
         await query.edit_message_text("⌨️ **ВВЕДИТЕ НОВЫЙ КЛЮЧ:**", parse_mode="Markdown")
-    elif data == "close_panel":
+    elif data == "close":
         await query.delete_message()
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(on_click))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(CallbackQueryHandler(button_tap))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ui))
     app.run_polling()
 
 if __name__ == "__main__":
