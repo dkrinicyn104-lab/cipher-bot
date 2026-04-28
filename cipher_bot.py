@@ -11,137 +11,114 @@ from telegram.ext import (
     CallbackQueryHandler, ContextTypes, filters
 )
 
-# --- НАСТРОЙКИ ---
 BOT_TOKEN = "7649500751:AAGUWL2O2epfFFvdO6mjHZX3ZelEBCwuJTQ"
 logging.basicConfig(level=logging.INFO)
 
-# --- ВСЕ ШИФРЫ МИРА В ОДНОМ МЕСТЕ ---
+# --- МОЩНЫЙ ФУНКЦИОНАЛ ---
 
-def aes_process(text, key, mode='encode'):
-    # Генерируем валидный Fernet ключ из обычного текста (ключа пользователя)
+def aes_crypt(text, key, mode='encode'):
+    # Превращаем любой ключ пользователя в 32-байтный формат для AES
     k = hashlib.sha256(key.encode()).digest()
-    f_key = base64.urlsafe_b64encode(k)
-    f = Fernet(f_key)
-    if mode == 'encode':
-        return f.encrypt(text.encode()).decode()
-    else:
-        return f.decrypt(text.encode()).decode()
-
-def atbash(text):
-    res = ""
-    for char in text:
-        if 'a' <= char <= 'z': res += chr(ord('z') - (ord(char) - ord('a')))
-        elif 'A' <= char <= 'Z': res += chr(ord('Z') - (ord(char) - ord('A')))
-        elif 'а' <= char <= 'я': res += chr(ord('я') - (ord(char) - ord('а')))
-        elif 'А' <= char <= 'Я': res += chr(ord('Я') - (ord(char) - ord('А')))
-        else: res += char
-    return res
-
-def vigenere(text, key, decode=False):
-    key = key.lower() if key else "key"
-    res = []
-    ki = 0
-    for char in text:
-        if char.isalpha():
-            shift = ord(key[ki % len(key)]) - ord('a')
-            if decode: shift = -shift
-            # Используем Цезаря внутри для сдвига
-            start = ord('A') if char.isupper() else ord('a')
-            alphabet_size = 32 if 'а' <= char.lower() <= 'я' else 26
-            if 'а' <= char.lower() <= 'я': start = ord('А') if char.isupper() else ord('а')
-            res.append(chr((ord(char) - start + shift) % alphabet_size + start))
-            ki += 1
-        else: res.append(char)
-    return "".join(res)
-
-# --- ИНТЕРФЕЙС ---
+    f = Fernet(base64.urlsafe_b64encode(k))
+    return f.encrypt(text.encode()).decode() if mode == 'encode' else f.decrypt(text.encode()).decode()
 
 def get_main_kb():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("🛠 ВЫБРАТЬ ШИФР"), KeyboardButton("🔄 СМЕНИТЬ РЕЖИМ")],
-        [KeyboardButton("🔑 УСТАНОВИТЬ КЛЮЧ"), KeyboardButton("🧹 СБРОС")]
+        [KeyboardButton("🔐 ВЫБРАТЬ ШИФР"), KeyboardButton("🔄 РЕЖИМ: ШИФРОВКА")],
+        [KeyboardButton("🔑 КЛЮЧ"), KeyboardButton("📜 ИСТОРИЯ")],
+        [KeyboardButton("⚙️ АВТО-РЕЖИМ: ВЫКЛ")]
     ], resize_keyboard=True)
 
-def get_cipher_inline():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("💎 AES-256 (Secret)", callback_data="set_aes"), InlineKeyboardButton("📦 Base64", callback_data="set_b64")],
-        [InlineKeyboardButton("🏛 Vigenere", callback_data="set_vig"), InlineKeyboardButton("📜 Atbash", callback_data="set_atb")],
-        [InlineKeyboardButton("🔢 Morse", callback_data="set_mor"), InlineKeyboardButton("🔄 Reverse", callback_data="set_rev")],
-        [InlineKeyboardButton("🔐 SHA-256 (Hash)", callback_data="set_sha")]
-    ])
-
-# --- ЛОГИКА БОТА ---
+# --- ОБРАБОТКА ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = context.user_data
-    ud.update({"cipher": "b64", "mode": "encode", "key": "secret", "state": "idle"})
-    
+    ud.update({
+        "cipher": "aes", "mode": "encode", "key": "secret", 
+        "auto": False, "history": [], "state": "idle"
+    })
     await update.message.reply_text(
-        "👋 **Добро пожаловать в MASTER CIPHER!**\n\nЯ — твой персональный инструмент для защиты информации. Выбирай алгоритм и присылай текст.",
+        "**PROFESSIONAL ENCODER v1.0**\n\nПришлите текст для мгновенной обработки.",
         reply_markup=get_main_kb(), parse_mode="Markdown"
     )
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = context.user_data
     text = update.message.text
 
-    # Обработка кнопок меню
-    if text == "🛠 ВЫБРАТЬ ШИФР":
-        await update.message.reply_text("Выберите нужный алгоритм:", reply_markup=get_cipher_inline())
+    # Навигация по кнопкам
+    if text == "🔐 ВЫБРАТЬ ШИФР":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("AES-256 (Strong)", callback_data="set_aes"), InlineKeyboardButton("Base64", callback_data="set_b64")],
+            [InlineKeyboardButton("Vigenere", callback_data="set_vig"), InlineKeyboardButton("Atbash", callback_data="set_atb")]
+        ])
+        await update.message.reply_text("Выберите алгоритм:", reply_markup=kb)
         return
-    elif text == "🔄 СМЕНИТЬ РЕЖИМ":
-        ud["mode"] = "decode" if ud.get("mode") == "encode" else "encode"
-        m_name = "ДЕШИФРОВКА 🔓" if ud["mode"] == "decode" else "ШИФРОВКА 🔐"
-        await update.message.reply_text(f"Режим изменен на: **{m_name}**", parse_mode="Markdown")
+
+    elif "🔄 РЕЖИМ:" in text:
+        ud["mode"] = "decode" if ud["mode"] == "encode" else "encode"
+        m_label = "ДЕШИФРОВКА" if ud["mode"] == "decode" else "ШИФРОВКА"
+        # Обновляем клавиатуру с новым названием кнопки
+        new_kb = get_main_kb().keyboard
+        new_kb[0][1] = KeyboardButton(f"🔄 РЕЖИМ: {m_label}")
+        await update.message.reply_text(f"Установлен режим: {m_label}", reply_markup=ReplyKeyboardMarkup(new_kb, resize_keyboard=True))
         return
-    elif text == "🔑 УСТАНОВИТЬ КЛЮЧ":
+
+    elif text == "📜 ИСТОРИЯ":
+        hist = ud.get("history", [])
+        res = "\n".join(hist[-5:]) if hist else "История пуста"
+        await update.message.reply_text(f"**Последние 5 операций:**\n\n{res}", parse_mode="Markdown")
+        return
+
+    elif "⚙️ АВТО-РЕЖИМ:" in text:
+        ud["auto"] = not ud["auto"]
+        status = "ВКЛ" if ud["auto"] else "ВЫКЛ"
+        new_kb = get_main_kb().keyboard
+        new_kb[2][0] = KeyboardButton(f"⚙️ АВТО-РЕЖИМ: {status}")
+        await update.message.reply_text(f"Авто-детект: {status}", reply_markup=ReplyKeyboardMarkup(new_kb, resize_keyboard=True))
+        return
+
+    elif text == "🔑 КЛЮЧ":
         ud["state"] = "wait_key"
-        await update.message.reply_text("Введите секретное слово (ключ):")
-        return
-    elif text == "🧹 СБРОС":
-        ud.update({"cipher": "b64", "mode": "encode", "key": "secret"})
-        await update.message.reply_text("Настройки сброшены до базовых.")
+        await update.message.reply_text("Введите новый секретный ключ:")
         return
 
     if ud.get("state") == "wait_key":
         ud["key"], ud["state"] = text, "idle"
-        await update.message.reply_text(f"✅ Ключ установлен: `{text}`", parse_mode="Markdown")
+        await update.message.reply_text(f"✅ Ключ обновлен: `{text}`", parse_mode="Markdown")
         return
 
-    # ПРОЦЕСС ШИФРОВАНИЯ
-    c, m, k = ud.get("cipher"), ud.get("mode"), ud.get("key")
-    try:
-        if c == "aes": res = aes_process(text, k, m)
-        elif c == "b64": res = base64.b64encode(text.encode()).decode() if m == "encode" else base64.b64decode(text).decode()
-        elif c == "atb": res = atbash(text)
-        elif c == "vig": res = vigenere(text, k, m == "decode")
-        elif c == "rev": res = text[::-1]
-        elif c == "sha": res = hashlib.sha256(text.encode()).hexdigest()
-        else: res = "Неизвестный шифр"
+    # САМА ШИФРОВКА
+    c, m, k = ud["cipher"], ud["mode"], ud["key"]
+    
+    # Логика Авто-режима: если текст похож на шифр, переключаем на дешифровку
+    if ud["auto"] and m == "encode" and (text.endswith("=") or len(text) > 20):
+        m = "decode"
 
-        response = (
-            f"📡 **Алгоритм:** `{c.upper()}`\n"
-            f"⚙️ **Режим:** `{'Шифровка' if m == 'encode' else 'Дешифровка'}`\n"
-            f"───\n`{res}`"
-        )
-        await update.message.reply_text(response, parse_mode="Markdown")
-    except Exception as e:
-        await update.message.reply_text("❌ Ошибка: Данные не соответствуют формату или неверный ключ.")
+    try:
+        if c == "aes": res = aes_crypt(text, k, m)
+        elif c == "b64": res = base64.b64encode(text.encode()).decode() if m == "encode" else base64.b64decode(text).decode()
+        else: res = "Метод не выбран"
+
+        # Сохраняем в историю
+        ud["history"].append(f"{c.upper()} ({m}): `{res[:20]}...`" )
+        
+        await update.message.reply_text(f"📊 **Результат ({c.upper()}):**\n\n`{res}`", parse_mode="Markdown")
+    except:
+        await update.message.reply_text("❌ Ошибка! Проверьте ключ или формат текста.")
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     ud = context.user_data
-    
-    cipher_code = query.data.replace("set_", "")
-    ud["cipher"] = cipher_code
-    await query.edit_message_text(f"✅ Выбран шифр: **{cipher_code.upper()}**", parse_mode="Markdown")
+    ud["cipher"] = query.data.replace("set_", "")
+    await query.edit_message_text(f"✅ Активен шифр: {ud['cipher'].upper()}")
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(on_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.run_polling()
 
 if __name__ == "__main__":
