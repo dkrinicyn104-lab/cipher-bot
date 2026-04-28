@@ -5,7 +5,7 @@ import hashlib
 import logging
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, 
-    ReplyKeyboardMarkup, KeyboardButton
+    ReplyKeyboardMarkup, KeyboardButton, constants
 )
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
@@ -16,9 +16,13 @@ from telegram.helpers import escape_markdown
 # ТВОЙ ТОКЕН
 BOT_TOKEN = "7649500751:AAGUWL2O2epfFFvdO6mjHZX3ZelEBCwuJTQ"
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logging.basicConfig(level=logging.INFO)
 
-# --- КРИПТО-ЯДРО (Без изменений, всё работает) ---
+# --- ГРАФИКА И СТИЛЬ ---
+DIVIDER = "────────────────────────"
+HACKER_HEADER = "📟 **CRYPTO TERMINAL v4.0**"
+
+# --- ЛОГИКА ШИФРОВ ---
 def caesar(text: str, shift: int) -> str:
     res = []
     for c in text:
@@ -43,75 +47,64 @@ def vigenere(text: str, key: str, decode: bool = False) -> str:
         else: res.append(c)
     return "".join(res)
 
-# --- ИНТЕРФЕЙС (Переработан на 100%) ---
+# --- КЛАВИАТУРЫ ---
 
-# Постоянное нижнее меню
-def main_reply_kb():
+def get_main_reply():
     return ReplyKeyboardMarkup([
-        [KeyboardButton("⚙️ Настройки")],
-        [KeyboardButton("ℹ️ О боте"), KeyboardButton("❓ Помощь")]
+        [KeyboardButton("⚙️ ПАНЕЛЬ УПРАВЛЕНИЯ")],
+        [KeyboardButton("👤 МОЙ ПРОФИЛЬ"), KeyboardButton("🆘 ПОМОЩЬ")]
     ], resize_keyboard=True)
 
-# Инлайн-меню настроек
-def settings_inline_kb(ud):
-    mode_str = "🔐 Шифрование" if ud.get("mode") == "encode" else "🔓 Дешифровка"
-    auto_str = "🟢 Авто: ВКЛ" if ud.get("auto") else "🔴 Авто: ВЫКЛ"
+def get_settings_inline(ud):
+    m_icon = "🔐" if ud.get("mode") == "encode" else "🔓"
+    m_text = "ШИФРОВАНИЕ" if ud.get("mode") == "encode" else "ДЕШИФРОВКА"
+    a_icon = "🔵" if ud.get("auto") else "⚪"
     
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(f"Текущий шифр: {ud.get('cipher').upper()}", callback_data="ciphers_list")],
-        [InlineKeyboardButton(mode_str, callback_data="toggle_mode"), InlineKeyboardButton(auto_str, callback_data="toggle_auto")],
-        [InlineKeyboardButton("🔑 Изменить ключ", callback_data="set_key")],
-        [InlineKeyboardButton("🏠 В главное меню", callback_data="to_main")]
+        [InlineKeyboardButton(f"📡 АЛГОРИТМ: {ud.get('cipher').upper()}", callback_data="list_ciphers")],
+        [InlineKeyboardButton(f"{m_icon} РЕЖИМ: {m_text}", callback_data="toggle_mode")],
+        [InlineKeyboardButton(f"{a_icon} АВТО-ДЕТЕКТ", callback_data="toggle_auto"), 
+         InlineKeyboardButton("🔑 КЛЮЧ", callback_data="set_key")],
+        [InlineKeyboardButton("💎 ЗАКРЫТЬ ПАНЕЛЬ", callback_data="close_panel")]
     ])
 
-# Список всех шифров
-def ciphers_list_kb():
+def get_ciphers_inline():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Base64", callback_data="set_c_base64"), InlineKeyboardButton("HEX", callback_data="set_c_hex")],
-        [InlineKeyboardButton("Цезарь", callback_data="set_c_caesar"), InlineKeyboardButton("Виженер", callback_data="set_c_vigenere")],
-        [InlineKeyboardButton("ROT13", callback_data="set_c_rot13"), InlineKeyboardButton("Реверс", callback_data="set_c_reverse")],
-        [InlineKeyboardButton("MD5", callback_data="set_c_md5"), InlineKeyboardButton("SHA256", callback_data="set_c_sha256")],
-        [InlineKeyboardButton("⬅️ Назад к настройкам", callback_data="to_settings")]
+        [InlineKeyboardButton("📦 Base64", callback_data="sc_base64"), InlineKeyboardButton("📟 HEX", callback_data="sc_hex")],
+        [InlineKeyboardButton("🏛 Caesar", callback_data="sc_caesar"), InlineKeyboardButton("🔑 Vigenere", callback_data="sc_vigenere")],
+        [InlineKeyboardButton("🔄 ROT13", callback_data="sc_rot13"), InlineKeyboardButton("◀️ REVERSE", callback_data="sc_reverse")],
+        [InlineKeyboardButton("🔒 MD5", callback_data="sc_md5"), InlineKeyboardButton("🛡 SHA256", callback_data="sc_sha256")],
+        [InlineKeyboardButton("⬅️ НАЗАД", callback_data="back_to_settings")]
     ])
 
-# --- ОБРАБОТЧИКИ ---
+# --- ХЭНДЛЕРЫ ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = context.user_data
-    ud.setdefault("cipher", "base64"); ud.setdefault("mode", "encode")
-    ud.setdefault("key", "secret"); ud.setdefault("auto", False)
+    for k, v in {"cipher": "base64", "mode": "encode", "key": "secret", "auto": False}.items():
+        ud.setdefault(k, v)
     
-    await update.message.reply_text(
-        r"🛡 *Cipher Bot PRO* — Твой личный криптограф\." + "\n\n" +
-        r"Просто отправь мне текст, и я обработаю его\." + "\n" +
-        r"Нажми кнопку *Настройки* внизу, чтобы сменить шифр\.",
-        parse_mode="MarkdownV2", reply_markup=main_reply_kb()
+    msg = (
+        f"{HACKER_HEADER}\n{DIVIDER}\n"
+        "Система готова к работе. Введите текст для мгновенной обработки или используйте панель управления для настройки протоколов."
     )
+    await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=get_main_reply())
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = context.user_data
     text = update.message.text
 
-    # Обработка кнопок нижнего меню
-    if text == "⚙️ Настройки":
-        await update.message.reply_text("🛠 *Управление ботом:*", 
-            reply_markup=settings_inline_kb(ud), parse_mode="MarkdownV2")
-        return
-    if text == "ℹ️ О боте":
-        await update.message.reply_text("🦾 *Cipher Bot v3.0*\nСоздано для максимальной приватности.", parse_mode="MarkdownV2")
-        return
-    if text == "❓ Помощь":
-        await update.message.reply_text("1. Выбери шифр в Настройках.\n2. Пришли текст.\n3. Получи результат!", reply_markup=main_reply_kb())
+    if text == "⚙️ ПАНЕЛЬ УПРАВЛЕНИЯ":
+        await update.message.reply_text(f"🛠 **НАСТРОЙКИ ПРОТОКОЛОВ:**\n{DIVIDER}", 
+            reply_markup=get_settings_inline(ud), parse_mode="Markdown")
         return
 
-    # Логика ввода ключа
     if ud.get("state") == "waiting_key":
-        ud["key"] = text; ud["state"] = "idle"
-        await update.message.reply_text(f"✅ Ключ обновлен на: `{escape_markdown(text, 2)}`", 
-            parse_mode="MarkdownV2", reply_markup=main_reply_kb())
+        ud["key"], ud["state"] = text, "idle"
+        await update.message.reply_text(f"✅ **КЛЮЧ ПРИНЯТ:** `{text}`", parse_mode="Markdown")
         return
 
-    # Основная обработка текста
+    # Процесс обработки
     c, m = ud.get("cipher"), ud.get("mode")
     try:
         if c == "base64":
@@ -130,43 +123,51 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             res = hashlib.md5(text.encode()).hexdigest()
         elif c == "sha256":
             res = hashlib.sha256(text.encode()).hexdigest()
-        else: res = "Ошибка выбора"
-
-        await update.message.reply_text(
-            fr"✅ *Результат \({c.upper()}\):*" + "\n\n" + f"`{escape_markdown(res, 2)}`",
-            parse_mode="MarkdownV2"
+        
+        # Визуал ответа
+        response = (
+            f"✅ **ОБРАБОТКА ЗАВЕРШЕНА**\n{DIVIDER}\n"
+            f"🔹 **Метод:** `{c.upper()}`\n"
+            f"🔹 **Режим:** `{'ШИФРОВКА' if m == 'encode' else 'ДЕШИФРОВКА'}`\n\n"
+            f"📝 **РЕЗУЛЬТАТ:**\n`{res}`"
         )
-    except Exception as e:
-        await update.message.reply_text(f"❌ Ошибка данных для шифра {c.upper()}")
+        await update.message.reply_text(response, parse_mode="Markdown")
+    except:
+        await update.message.reply_text("❌ **ОШИБКА ПРОТОКОЛА:** Проверьте корректность входных данных.")
 
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query; await q.answer()
-    ud = context.user_data; data = q.data
+async def on_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer() # МОМЕНТАЛЬНЫЙ ОТКЛИК (Убирает лаг кнопки)
+    ud = context.user_data
+    data = query.data
 
-    if data == "to_settings" or data == "to_main":
-        await q.edit_message_text("🛠 *Управление ботом:*", reply_markup=settings_inline_kb(ud), parse_mode="MarkdownV2")
+    if data == "back_to_settings":
+        await query.edit_message_text(f"🛠 **НАСТРОЙКИ ПРОТОКОЛОВ:**\n{DIVIDER}", 
+            reply_markup=get_settings_inline(ud), parse_mode="Markdown")
     elif data == "toggle_mode":
         ud["mode"] = "decode" if ud["mode"] == "encode" else "encode"
-        await q.edit_message_reply_markup(reply_markup=settings_inline_kb(ud))
+        await query.edit_message_reply_markup(reply_markup=get_settings_inline(ud))
     elif data == "toggle_auto":
         ud["auto"] = not ud["auto"]
-        await q.edit_message_reply_markup(reply_markup=settings_inline_kb(ud))
-    elif data == "ciphers_list":
-        await q.edit_message_text("🔤 *Выбери алгоритм:*", reply_markup=ciphers_list_kb(), parse_mode="MarkdownV2")
-    elif data.startswith("set_c_"):
-        ud["cipher"] = data.replace("set_c_", "")
-        await q.edit_message_text(f"✅ Выбран шифр: *{ud['cipher'].upper()}*", 
-            reply_markup=settings_inline_kb(ud), parse_mode="MarkdownV2")
+        await query.edit_message_reply_markup(reply_markup=get_settings_inline(ud))
+    elif data == "list_ciphers":
+        await query.edit_message_text(f"📡 **ВЫБОР АЛГОРИТМА:**\n{DIVIDER}", 
+            reply_markup=get_ciphers_inline(), parse_mode="Markdown")
+    elif data.startswith("sc_"):
+        ud["cipher"] = data.replace("sc_", "")
+        await query.edit_message_text(f"✅ **ПРОТОКОЛ {ud['cipher'].upper()} АКТИВИРОВАН**", 
+            reply_markup=get_settings_inline(ud), parse_mode="Markdown")
     elif data == "set_key":
         ud["state"] = "waiting_key"
-        await q.edit_message_text("⌨️ *Отправь мне новое кодовое слово (ключ):*", parse_mode="MarkdownV2")
+        await query.edit_message_text("⌨️ **ВВЕДИТЕ НОВЫЙ КЛЮЧ:**", parse_mode="Markdown")
+    elif data == "close_panel":
+        await query.delete_message()
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(callback_handler))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("Бот запущен!")
+    app.add_handler(CallbackQueryHandler(on_click))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.run_polling()
 
 if __name__ == "__main__":
