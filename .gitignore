@@ -1,12 +1,10 @@
-# Секретные ключи
+# Секреты
 .env
+*.pem
 
-# Кэш Python
-__pycache__/
+# Логи и данные
+bot.log
+stats.json
 *.pyc
-*.pyo
-
-# Виртуальные окружения
-venv/
-env/
-.venv/
+__pycache__/
+.vscode/
