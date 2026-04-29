@@ -1,103 +1,119 @@
 import logging
 import base64
-import hashlib
-import os
-from cryptography.fernet import Fernet
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
-# Конфигурация
+# --- КОНФИГУРАЦИЯ ---
 BOT_TOKEN = "7649500751:AAGUWL2O2epfFFvdO6mjHZX3ZelEBCwuJTQ"
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# --- ЯДРО ШИФРОВАНИЯ ---
-def crypt_engine(text, mode='encode', cipher_type='aes', key='MASTER_KEY'):
+# --- ВСТРОЕННЫЕ ШИФРЫ (Работают молниеносно, не требуют ключей) ---
+MORSE_DICT = { 'A':'.-', 'B':'-...', 'C':'-.-.', 'D':'-..', 'E':'.', 'F':'..-.', 'G':'--.', 'H':'....', 'I':'..', 'J':'.---', 'K':'-.-', 'L':'.-..', 'M':'--', 'N':'-.', 'O':'---', 'P':'.--.', 'Q':'--.-', 'R':'.-.', 'S':'...', 'T':'-', 'U':'..-', 'V':'...-', 'W':'.--', 'X':'-..-', 'Y':'-.--', 'Z':'--..', '1':'.----', '2':'..---', '3':'...--', '4':'....-', '5':'.....', '6':'-....', '7':'--...', '8':'---..', '9':'----.', '0':'-----', ' ':'/'}
+
+def atbash(text):
+    res = ""
+    for c in text:
+        if 'A' <= c <= 'Z': res += chr(155 - ord(c))
+        elif 'a' <= c <= 'z': res += chr(219 - ord(c))
+        elif 'А' <= c <= 'Я': res += chr(1071 - (ord(c) - 1040))
+        elif 'а' <= c <= 'я': res += chr(1103 - (ord(c) - 1072))
+        else: res += c
+    return res
+
+def process_text(text, cipher, mode):
     try:
-        if cipher_type == 'aes':
-            # Генерация ключа из строки
-            k = hashlib.sha256(key.encode()).digest()
-            f = Fernet(base64.urlsafe_b64encode(k))
+        if cipher == 'base64':
+            return base64.b64encode(text.encode()).decode() if mode == 'encode' else base64.b64decode(text.encode()).decode()
+        elif cipher == 'hex':
+            return text.encode().hex() if mode == 'encode' else bytes.fromhex(text).decode()
+        elif cipher == 'atbash':
+            return atbash(text) # Атбаш сам себя расшифровывает
+        elif cipher == 'morse':
             if mode == 'encode':
-                return f.encrypt(text.encode()).decode()
-            return f.decrypt(text.encode()).decode()
-        
-        elif cipher_type == 'b64':
-            if mode == 'encode':
-                return base64.b64encode(text.encode()).decode()
-            return base64.b64decode(text.encode()).decode()
-    except Exception as e:
-        return f"Ошибка: {str(e)}"
+                return ' '.join(MORSE_DICT.get(i.upper(), i) for i in text)
+            else:
+                inv_morse = {v: k for k, v in MORSE_DICT.items()}
+                return ''.join(inv_morse.get(i, i) for i in text.split(' '))
+        elif cipher == 'reverse':
+            return text[::-1]
+    except Exception:
+        return "❌ Ошибка: проверьте текст или выбранный режим дешифровки."
 
-# --- КЛАВИАТУРЫ ---
-def get_main_menu(ud):
-    mode_label = "🔐 ШИФРОВКА" if ud.get('mode') == 'encode' else "🔓 ДЕШИФРОВКА"
-    algo_label = ud.get('cipher', 'AES').upper()
+# --- ИНТЕРФЕЙС (Максимально чистый) ---
+def get_main_keyboard(ud):
+    # Кнопки динамически меняют текст в зависимости от настроек
+    mode_text = "🔓 Режим: ДЕШИФРОВАТЬ" if ud.get('mode') == 'decode' else "🔒 Режим: ЗАШИФРОВАТЬ"
+    cipher_text = f"⚙️ Шифр: {ud.get('cipher', 'base64').upper()}"
+    
     return ReplyKeyboardMarkup([
-        [KeyboardButton(f"⚙️ МЕТОД: {algo_label}"), KeyboardButton(f"🔄 {mode_label}")],
-        [KeyboardButton("📜 ИСТОРИЯ"), KeyboardButton("🧹 СБРОС")]
+        [KeyboardButton(mode_text), KeyboardButton(cipher_text)]
     ], resize_keyboard=True)
 
-# --- ОБРАБОТКА КОМАНД ---
+# --- ЛОГИКА ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = context.user_data
-    ud.update({"cipher": "aes", "mode": "encode", "history": []})
-    await update.message.reply_text(
-        "💎 **CIPHER MASTER PRO**\n\nПришли текст, и я обработаю его мгновенно.",
-        reply_markup=get_main_menu(ud), parse_mode="Markdown"
+    ud.update({'mode': 'encode', 'cipher': 'base64'})
+    
+    welcome_text = (
+        "👋 **Привет! Это простой и быстрый шифратор.**\n\n"
+        "Просто отправь мне любой текст, и я его обработаю.\n"
+        "👇 Управляй настройками с помощью кнопок ниже."
     )
+    await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard(ud), parse_mode="Markdown")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ud = context.user_data
-    if "history" not in ud: ud["history"] = []
+    if 'mode' not in ud: ud.update({'mode': 'encode', 'cipher': 'base64'})
     text = update.message.text
 
-    # Обработка кнопок меню
-    if "⚙️ МЕТОД:" in text:
+    # Обработка кнопок
+    if "Режим:" in text:
+        ud['mode'] = 'decode' if ud['mode'] == 'encode' else 'encode'
+        action = "расшифровки 🔓" if ud['mode'] == 'decode' else "шифрования 🔒"
+        await update.message.reply_text(f"Включен режим {action}", reply_markup=get_main_keyboard(ud))
+        return
+        
+    if "Шифр:" in text:
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("AES-256", callback_data="set_aes"), 
-             InlineKeyboardButton("Base64", callback_data="set_b64")]
+            [InlineKeyboardButton("📦 Base64", callback_data="b64"), InlineKeyboardButton("📟 HEX", callback_data="hex")],
+            [InlineKeyboardButton("📜 Atbash", callback_data="atbash"), InlineKeyboardButton("📡 Morse", callback_data="morse")],
+            [InlineKeyboardButton("🔄 Reverse (Задом наперед)", callback_data="reverse")]
         ])
-        await update.message.reply_text("Выбери алгоритм:", reply_markup=kb)
+        await update.message.reply_text("Выберите алгоритм:", reply_markup=kb)
         return
 
-    if "🔄" in text:
-        ud["mode"] = "decode" if ud.get("mode") == "encode" else "encode"
-        await update.message.reply_text(f"Режим изменен!", reply_markup=get_main_menu(ud))
-        return
+    # Шифрование / Дешифрование
+    result = process_text(text, ud['cipher'], ud['mode'])
+    icon = "🔓" if ud['mode'] == 'decode' else "🔒"
+    
+    # Красивый вывод с моноширинным шрифтом для копирования
+    reply_text = f"{icon} **{ud['cipher'].upper()}**:\n\n`{result}`"
+    await update.message.reply_text(reply_text, parse_mode="Markdown")
 
-    if text == "📜 ИСТОРИЯ":
-        h = ud["history"][-5:]
-        await update.message.reply_text("📜 **Последние 5 действий:**\n" + ("\n".join(h) if h else "Пусто"))
-        return
-
-    if text == "🧹 СБРОС":
-        ud.update({"cipher": "aes", "mode": "encode", "history": []})
-        await update.message.reply_text("Настройки сброшены.", reply_markup=get_main_menu(ud))
-        return
-
-    # Процесс шифрования
-    res = crypt_engine(text, ud.get('mode'), ud.get('cipher'))
-    ud["history"].append(f"{ud.get('mode')}: {text[:10]}... -> {res[:10]}...")
-    await update.message.reply_text(f"**РЕЗУЛЬТАТ:**\n`{res}`", parse_mode="Markdown")
-
-async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await query.answer() # Убирает часики с кнопки моментально
+    
     ud = context.user_data
-    ud["cipher"] = query.data.replace("set_", "")
-    await query.edit_message_text(f"✅ Установлен метод: {ud['cipher'].upper()}")
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="Меню обновлено", reply_markup=get_main_menu(ud))
+    ud['cipher'] = query.data
+    
+    await query.edit_message_text(f"✅ Установлен шифр: **{ud['cipher'].upper()}**", parse_mode="Markdown")
+    # Обновляем текст на нижней кнопке
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id, 
+        text="👇 Настройки обновлены.", 
+        reply_markup=get_main_keyboard(ud)
+    )
 
 def main():
-    # Application builder — единственный верный способ для v21.10
+    # Application.builder() гарантирует стабильность на Railway
     app = Application.builder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(on_callback))
+    app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    logger.info("Бот запущен...")
+    # drop_pending_updates=True очистит спам, накопившийся пока бот лежал
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
